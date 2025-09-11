@@ -2,12 +2,13 @@ html, body, #root {
   height: 100%;
   margin: 0;
   padding: 0;
-  background: #0b0e11;     /* 和儀表板主色一致 */
-  color: #eaf1f8;          /* 文字顏色 */
+  background: #ffffff;        /* 淺色底 */
+  color: #111827;             /* 深色文字 */
   width: 100%;
   overflow-x: hidden;
   box-sizing: border-box;
 }
+
 :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;

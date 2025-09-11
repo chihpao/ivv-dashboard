@@ -1,8 +1,8 @@
 :root{
-  --bg:#0b0e11;
-  --card:#11151a;
-  --muted:#8b9bb1;
-  --text:#eaf1f8;
+  --bg:#ffffff;
+  --card:#ffffff;
+  --muted:#000000;
+  --text:#000000;
   --line:#263241;
   --accent:#2f80ed;
   --radius:14px;
@@ -43,7 +43,7 @@
   padding:6px 10px;
   border-radius:10px;
   border:1px solid #304255;
-  background:#0d1116;
+  background:#ffffff;
   color:var(--text);
 }
 

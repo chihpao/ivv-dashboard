@@ -36,7 +36,8 @@ const movingAvg = (data: TrendRow[], key: keyof TrendRow, win: number) => {
 };
 
 export default function Dashboard() {
-  const { kpi, trend, top5, loading } = useSheets();
+  // <- 這裡多拿 moduleByMonth
+  const { kpi, trend, moduleByMonth, loading } = useSheets();
   const [month, setMonth] = useState<string>("ALL");
 
   // 可選月份來源：trend 「日期」欄
@@ -49,22 +50,43 @@ export default function Dashboard() {
     return Array.from(s).sort();
   }, [trend]);
 
-  const trendRows: TrendRow[] = useMemo(() => {
-    const rows: TrendRow[] = (trend ?? [])
+  // 趨勢資料（含移動平均）
+  const trendAll: TrendRow[] = useMemo(() => {
+    return (trend ?? [])
       .map(r => ({ date: String(r["日期"] ?? r["date"] ?? r["Date"]), count: Number(r["件數"] ?? r["count"] ?? 0) }))
       .filter(r => r.date)
       .sort((a, b) => a.date.localeCompare(b.date));
-    const filtered = month === "ALL" ? rows : rows.filter(r => monthKey(r.date) === month);
-    return movingAvg(movingAvg(filtered, "count", 7), "count", 30);
-  }, [trend, month]);
+  }, [trend]);
 
+  const trendRows: TrendRow[] = useMemo(() => {
+    const filtered = month === "ALL" ? trendAll : trendAll.filter(r => monthKey(r.date) === month);
+    return movingAvg(movingAvg(filtered, "count", 7), "count", 30);
+  }, [trendAll, month]);
+
+  // KPI：本月總件數（ALL = 全部月份總和）
+  const monthTotalCount = useMemo(() => {
+    const rows = month === "ALL" ? trendAll : trendAll.filter(r => monthKey(r.date) === month);
+    return rows.reduce((sum, r) => sum + (r.count || 0), 0);
+  }, [trendAll, month]);
+
+  // 模組 Top5：使用 moduleByMonth（month, module, count）
   const topRows: TopRow[] = useMemo(() => {
-    // 目前仍顯示彙整版 Top5；若要「按月 Top5」，改從 calls 即時計算
-    return (top5 ?? []).map((r: any) => {
-      const keys = Object.keys(r);
-      return { name: String(r[keys[0]]), value: Number(r[keys[1]] ?? 0) };
-    });
-  }, [top5]);
+    const src = (moduleByMonth ?? []).map((r: any) => ({
+      month: String(r["month"] ?? r["月份"] ?? r["Month"]),
+      module: String(r["module"] ?? r["模組"] ?? r["Module"]),
+      count: Number(r["count"] ?? r["件數"] ?? r["Count"] ?? 0),
+    }));
+    const filtered = month === "ALL" ? src : src.filter(r => r.month === month);
+
+    const totals = new Map<string, number>();
+    for (const r of filtered) {
+      totals.set(r.module, (totals.get(r.module) ?? 0) + r.count);
+    }
+    return Array.from(totals.entries())
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5);
+  }, [moduleByMonth, month]);
 
   const k = kpi?.[0] ?? {};
   const trendRef = useRef<HTMLDivElement | null>(null);
@@ -89,13 +111,12 @@ export default function Dashboard() {
             <option value="ALL">全部</option>
             {months.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
-          {/* 你可以在這裡加上「全部匯出 PNG/CSV」 */}
         </div>
       </div>
 
       {/* KPI 區：桌面 5 欄、平板 3 欄、手機 1 欄 */}
       <section className="kpi-grid">
-        <Kpi label="本月總件數"       value={k["本月總件數"] ?? "-"} />
+        <Kpi label="本月總件數"       value={monthTotalCount} />
         <Kpi label="解決率"           value={k["解決率"] ?? "-"} />
         <Kpi label="平均處理時長(分)" value={k["平均處理時長"] ?? k["平均處理時長(分)"] ?? "-"} />
         <Kpi label="未結案數"         value={k["未結案數"] ?? "-"} />
@@ -135,10 +156,10 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* 模組 Top5 */}
+        {/* 模組 Top5（會跟月份變動） */}
         <div className="card" ref={topRef}>
           <div className="card-head">
-            <div className="card-title">模組別 Top 5（件數）</div>
+            <div className="card-title">模組別 Top 5（件數）{month !== "ALL" ? ` - ${month}` : ""}</div>
             <div className="actions">
               <button className="btn" onClick={() => png(topRef, `module-top5-${month}.png`)}>匯出 PNG</button>
               <button
