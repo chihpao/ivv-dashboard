@@ -13,6 +13,15 @@ export default function Dashboard() {
 
   const k = kpi[0] ?? {}
 
+  // 有些表頭命名可能不同（例如：未結案件數/未結案數、SLA達成/SLA達成率）
+  // 這裡提供同義鍵的 fallback，避免顯示成 "-"。
+  const pick = (obj: Record<string, any>, candidates: string[], fallback: any = '-') => {
+    for (const key of candidates) {
+      if (key in obj && obj[key] !== undefined && obj[key] !== null && obj[key] !== '') return obj[key]
+    }
+    return fallback
+  }
+
   const trendRows = trend.map((r: any) => ({
     // 預設第一欄為日期、第二欄為數量
     date: String(r[Object.keys(r)[0]]),
@@ -121,11 +130,36 @@ export default function Dashboard() {
 
       {/* KPI */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
-        <Kpi title="累計案件" value={k['累計案件'] ?? k['總案件數'] ?? '-'} />
-        <Kpi title="解決率" value={k['解決率'] ?? '-'} />
-        <Kpi title="平均處理(分)" value={k['平均處理(分)'] ?? k['平均處理時間'] ?? '-'} />
-        <Kpi title="逾期待辦" value={k['逾期待辦'] ?? '-'} />
-        <Kpi title="SLA達成" value={k['SLA達成'] ?? '-'} />
+        <Kpi
+          title="本月總件數"
+          value={pick(k, [
+            '本月總件數', '本月件數', '本月總計', '本月新增數', '本月新增件數',
+          ])}
+        />
+        <Kpi
+          title="解決率"
+          value={pick(k, [
+            '解決率', '解決率%', '本月解決率',
+          ])}
+        />
+        <Kpi
+          title="平均處理時長"
+          value={pick(k, [
+            '平均處理時長', '平均處理時長(分)', '平均處理時長(分鐘)', '平均處理時間(分)', '平均處理時間(分鐘)',
+          ])}
+        />
+        <Kpi
+          title="未結案件數"
+          value={pick(k, [
+            '未結案件數', '未結案數', '未結數', '未處理案件數',
+          ])}
+        />
+        <Kpi
+          title="SLA達成率"
+          value={pick(k, [
+            'SLA達成率', 'SLA達成', 'SLA達成%', 'SLA達成率(%)',
+          ])}
+        />
       </div>
 
       {/* 每日趨勢 + 7/30 日均線 */}
@@ -268,4 +302,3 @@ const btnStyle: React.CSSProperties = {
 }
 
 const palette = ['#8884d8', '#82ca9d', '#ffc658', '#ff7f50', '#00c49f', '#a28fd0', '#8dd1e1', '#d0ed57', '#a4de6c']
-
