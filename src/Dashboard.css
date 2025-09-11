@@ -1,0 +1,128 @@
+:root{
+  --bg:#0b0e11;
+  --card:#11151a;
+  --muted:#8b9bb1;
+  --text:#eaf1f8;
+  --line:#263241;
+  --accent:#2f80ed;
+  --radius:14px;
+  --gap:14px;
+}
+
+*{ box-sizing:border-box; }
+
+.page{
+    padding: 16px;
+    color: var(--text);
+    min-height: 100vh;
+    width: 100%;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
+    box-sizing: border-box;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+  
+
+.loading{ padding:24px; }
+
+.toolbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+}
+.title{ font-weight:700; font-size:20px; }
+
+.tool-actions{ display:flex; align-items:center; gap:8px; }
+.label{ font-size:12px; color:var(--muted); }
+.select{
+  padding:6px 10px;
+  border-radius:10px;
+  border:1px solid #304255;
+  background:#0d1116;
+  color:var(--text);
+}
+
+.kpi-grid{
+  display:grid;
+  gap:var(--gap);
+  grid-template-columns: repeat(1, minmax(0,1fr));
+}
+.kpi{
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  padding:14px;
+}
+.kpi-label{ font-size:12px; color:var(--muted); }
+.kpi-value{ font-size:28px; font-weight:800; margin-top:6px; }
+
+.cards {
+    display: grid;
+    gap: var(--gap);
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    width: 100%;
+    box-sizing: border-box;
+  }
+  
+
+.card{
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  padding:12px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  min-height:360px;
+}
+
+.card-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  flex-wrap:wrap;
+}
+.card-title{ font-size:14px; font-weight:700; }
+
+.actions{ display:flex; gap:8px; }
+.btn{
+  padding:8px 12px;
+  border-radius:10px;
+  border:1px solid #37516d;
+  background:#1b2735;
+  color:#fff;
+  font-size:12px;
+  cursor:pointer;
+}
+.btn:disabled{ opacity:.6; cursor:not-allowed; }
+
+.chart{ width:100%; height:320px; }
+
+.footer{ text-align:right; color:var(--muted); font-size:12px; }
+
+/* 平板 */
+@media (min-width:768px){
+  .kpi-grid{ grid-template-columns: repeat(3, minmax(0,1fr)); }
+  .cards{ grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+
+/* 桌面 */
+@media (min-width: 1280px) {
+  .kpi-grid { 
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    max-width: 100%;
+  }
+  .cards { 
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-width: 100%;
+  }
+  .page {
+    padding: 16px 24px;
+  }
+}
