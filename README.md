@@ -1,69 +1,15 @@
-# React + TypeScript + Vite
+# IV&V Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+使用 React與 TypeScript 建構的互動式儀表板，協助團隊掌握 IV&V 服務的量能與 SLA 表現。介面會自動從Google Sheets 抓取 KPI、趨勢與模組成效資料，並以圖表與的方式呈現數據。
 
-Currently, two official plugins are available:
+## 功能重點
+- 支援依月份篩選資料，快速切換全域或特定月份的觀察視角
+- 展示累積案件量、處理時間、SLA 達成率等指標，以及每日趨勢折線圖
+- 分析模組使用量 Top 5，協助找出熱門或需關注的模組
+- 提供資料匯出成 CSV 與圖表匯出成 PNG，方便分享或留存
+- 自動更新時間戳記，提醒使用者目前視圖的最新資料時間
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      ...tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      ...tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      ...tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## 技術重點
+- React Query 負責快取與同步 Google Sheets CSV 資料
+- Recharts 呈現趨勢折線圖與模組排行長條圖
+- html2canvas 產生圖表截圖，搭配客製化工具列提供匯出操作
