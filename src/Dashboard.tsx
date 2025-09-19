@@ -500,15 +500,9 @@ function LoadingState() {
         </div>
         <div className="loading-copy">
           <div className="loading-heading">
-            <span className="loading-heading__main">資料調頻</span>
-            <span className="loading-heading__accent">載入中</span>
-            <span className="loading-ellipsis">
-              <span />
-              <span />
-              <span />
-            </span>
+            <span className="loading-heading__main">資料載入中</span>
           </div>
-          <p className="loading-message">正在同步各模組的最新訊號，請稍待片刻。</p>
+          <p className="loading-message">Loading...</p>
         </div>
         <div className="loading-progress">
           <span className="loading-progress__bar" />
