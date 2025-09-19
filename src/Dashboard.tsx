@@ -322,7 +322,7 @@ export default function Dashboard() {
     return list;
   }, [selectedMonthly, previousMonthly, yoyMonthly, filteredTrend, topRows, trendAll.length, monthTotalCount, year]);
 
-  if (loading) return <div className="page"><div className="loading">載入中…</div></div>;
+  if (loading) return <LoadingState />;
 
   return (
     <div className="page">
@@ -482,6 +482,28 @@ function Kpi({ label, value, detail }: { label: string; value: any; detail?: Rea
       <div className="kpi-label">{label}</div>
       <div className="kpi-value">{display}</div>
       {detail ? <div className="kpi-detail">{detail}</div> : null}
+    </div>
+  );
+}
+
+function LoadingState() {
+  return (
+    <div className="page loading-screen">
+      <div className="loading-card">
+        <div className="loading-orbit" aria-hidden="true">
+          <span className="loading-planet loading-planet--core" />
+          <span className="loading-planet loading-planet--satellite" />
+        </div>
+        <div className="loading-text" role="status" aria-live="polite">
+          <span className="loading-title">資料調頻中</span>
+          <span className="loading-dots">
+            <span />
+            <span />
+            <span />
+          </span>
+        </div>
+        <div className="loading-sub">請稍候，我們正在對齊最新履約訊號。</div>
+      </div>
     </div>
   );
 }
