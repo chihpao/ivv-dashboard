@@ -489,20 +489,30 @@ function Kpi({ label, value, detail }: { label: string; value: any; detail?: Rea
 function LoadingState() {
   return (
     <div className="page loading-screen">
-      <div className="loading-card">
-        <div className="loading-orbit" aria-hidden="true">
-          <span className="loading-planet loading-planet--core" />
-          <span className="loading-planet loading-planet--satellite" />
+      <div className="loading-shell" role="status" aria-live="polite">
+        <div className="loading-hero" aria-hidden="true">
+          <div className="loading-hero__orb" />
+          <div className="loading-hero__wave loading-hero__wave--one" />
+          <div className="loading-hero__wave loading-hero__wave--two" />
+          <div className="loading-hero__spark loading-hero__spark--one" />
+          <div className="loading-hero__spark loading-hero__spark--two" />
+          <div className="loading-hero__spark loading-hero__spark--three" />
         </div>
-        <div className="loading-text" role="status" aria-live="polite">
-          <span className="loading-title">資料調頻中</span>
-          <span className="loading-dots">
-            <span />
-            <span />
-            <span />
-          </span>
+        <div className="loading-copy">
+          <div className="loading-heading">
+            <span className="loading-heading__main">資料調頻</span>
+            <span className="loading-heading__accent">載入中</span>
+            <span className="loading-ellipsis">
+              <span />
+              <span />
+              <span />
+            </span>
+          </div>
+          <p className="loading-message">正在同步各模組的最新訊號，請稍待片刻。</p>
         </div>
-        <div className="loading-sub">請稍候，我們正在對齊最新履約訊號。</div>
+        <div className="loading-progress">
+          <span className="loading-progress__bar" />
+        </div>
       </div>
     </div>
   );
