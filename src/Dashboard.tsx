@@ -142,40 +142,6 @@ export default function Dashboard() {
     return movingAvg(movingAvg(filteredTrend, "count", 7), "count", 30);
   }, [filteredTrend]);
 
-  const avgDurationStat = useMemo(() => {
-    if (!avgDurationRows.length) return { value: null as number | null, detail: null as string | null };
-
-    if (month !== "ALL") {
-      const target = avgDurationRows.find(item => item.month === month);
-      if (target) {
-        const d = dayjs(`${target.month}-01`);
-        return {
-          value: target.value,
-          detail: d.isValid() ? d.format("YYYY 年 MM 月 平均") : `${target.month} 平均`,
-        };
-      }
-    }
-
-    if (year !== "ALL") {
-      const rows = avgDurationRows.filter(item => item.year === year);
-      if (rows.length) {
-        const average = rows.reduce((sum, item) => sum + item.value, 0) / rows.length;
-        return {
-          value: +average.toFixed(2),
-          detail: `${year} 年平均（${rows.length} 月）`,
-        };
-      }
-    }
-
-    const latest = avgDurationRows[avgDurationRows.length - 1];
-    if (!latest) return { value: null, detail: null };
-    const d = dayjs(`${latest.month}-01`);
-    return {
-      value: latest.value,
-      detail: d.isValid() ? `最新 ${d.format("YYYY 年 MM 月")} 平均` : `最新 ${latest.month}`,
-    };
-  }, [avgDurationRows, month, year]);
-
   const monthlyTotals = useMemo(() => {
     const map = new Map<string, {
       month: string;
@@ -247,13 +213,92 @@ export default function Dashboard() {
     if (month !== "ALL") {
       const d = dayjs(`${month}-01`);
       const prefix = d.isValid() ? d.format("YYYY 年 MM 月") : month;
-      return `${prefix}（${filteredTrend.length} 日）`;
+      return `${prefix}平均（${filteredTrend.length} 日）`;
     }
     if (year !== "ALL") {
       return `${year} 年平均（${filteredTrend.length} 日）`;
     }
-    return `最近 ${filteredTrend.length} 日平均`;
+    return `全部年份平均（${filteredTrend.length} 日）`;
   }, [filteredTrend, month, year]);
+
+  const avgDurationStat = useMemo(() => {
+    if (!avgDurationRows.length) return { value: null as number | null, detail: null as string | null };
+
+    const durationByMonth = new Map<string, number>();
+    const monthsByYearFromDuration = new Map<string, string[]>();
+    for (const item of avgDurationRows) {
+      durationByMonth.set(item.month, item.value);
+      if (!monthsByYearFromDuration.has(item.year)) monthsByYearFromDuration.set(item.year, []);
+      monthsByYearFromDuration.get(item.year)!.push(item.month);
+    }
+    for (const months of monthsByYearFromDuration.values()) {
+      months.sort();
+    }
+
+    const weightByMonth = new Map<string, number>();
+    for (const m of monthlyTotals) {
+      weightByMonth.set(m.month, Math.max(0, m.total || 0));
+    }
+
+    const computeAverage = (months: string[]) => {
+      if (!months.length) return null;
+      let weightedSum = 0;
+      let weightSum = 0;
+      let plainSum = 0;
+      let count = 0;
+      for (const mk of months) {
+        const value = durationByMonth.get(mk);
+        if (value == null) continue;
+        const weight = weightByMonth.get(mk) ?? 0;
+        if (weight > 0) {
+          weightedSum += value * weight;
+          weightSum += weight;
+        }
+        plainSum += value;
+        count += 1;
+      }
+      if (!count) return null;
+      if (weightSum > 0) {
+        return { value: weightedSum / weightSum, months: count, weighted: true };
+      }
+      return { value: plainSum / count, months: count, weighted: false };
+    };
+
+    if (month !== "ALL") {
+      const value = durationByMonth.get(month);
+      if (value != null) {
+        const d = dayjs(`${month}-01`);
+        return {
+          value,
+          detail: d.isValid() ? d.format("YYYY 年 MM 月 平均") : `${month} 平均`,
+        };
+      }
+    }
+
+    if (year !== "ALL") {
+      const months = monthsByYearFromDuration.get(year) ?? [];
+      const result = computeAverage(months);
+      if (result?.value != null) {
+        const suffix = result.weighted ? "，依案件量加權" : "";
+        return {
+          value: result.value,
+          detail: `${year} 年平均（${result.months} 月${suffix}）`,
+        };
+      }
+    }
+
+    const allMonths = avgDurationRows.map(item => item.month);
+    const overall = computeAverage(allMonths);
+    if (overall?.value != null) {
+      const suffix = overall.weighted ? "，依案件量加權" : "";
+      return {
+        value: overall.value,
+        detail: `全部年份平均（${overall.months} 月${suffix}）`,
+      };
+    }
+
+    return { value: null, detail: null };
+  }, [avgDurationRows, month, year, monthlyTotals]);
 
   const totalLabel = useMemo(() => {
     if (month !== "ALL") return "本月總件數";
