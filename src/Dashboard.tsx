@@ -51,7 +51,7 @@ const movingAvg = (data: TrendRow[], key: keyof TrendRow, win: number) => {
 };
 
 export default function Dashboard() {
-  const { kpi, trend, moduleByMonth, loading } = useSheets();
+  const { trend, moduleByMonth, avgCallDuration, loading } = useSheets();
   const [year, setYear] = useState<string>("ALL");
   const [month, setMonth] = useState<string>("ALL");
   const isYearAll = year === "ALL";
@@ -96,6 +96,26 @@ export default function Dashboard() {
     return monthsByYear.get(year) ?? [];
   }, [year, monthsByYear]);
 
+  const avgDurationRows = useMemo(() => {
+    const rows: Array<{ month: string; year: string; value: number }> = [];
+    for (const r of avgCallDuration ?? []) {
+      const rawMonth = (r as any)["month"] ?? (r as any)["月份"] ?? (r as any)["Month"];
+      const mk = monthKey(String(rawMonth ?? ""));
+      if (!mk || mk.length < 7) continue;
+      const rawDuration =
+        (r as any)["avg_call_duration"] ??
+        (r as any)["平均處理時長"] ??
+        (r as any)["平均處理時長(分)"] ??
+        (r as any)["AvgCallDuration"] ??
+        (r as any)["avg"];
+      if (rawDuration === "" || rawDuration === undefined || rawDuration === null) continue;
+      const duration = Number(rawDuration);
+      if (!Number.isFinite(duration)) continue;
+      rows.push({ month: mk, year: yearFromMonth(mk), value: duration });
+    }
+    return rows.sort((a, b) => a.month.localeCompare(b.month));
+  }, [avgCallDuration]);
+
   useEffect(() => {
     if (year === "ALL") {
       if (month !== "ALL") setMonth("ALL");
@@ -121,6 +141,40 @@ export default function Dashboard() {
   const trendRows: TrendRow[] = useMemo(() => {
     return movingAvg(movingAvg(filteredTrend, "count", 7), "count", 30);
   }, [filteredTrend]);
+
+  const avgDurationStat = useMemo(() => {
+    if (!avgDurationRows.length) return { value: null as number | null, detail: null as string | null };
+
+    if (month !== "ALL") {
+      const target = avgDurationRows.find(item => item.month === month);
+      if (target) {
+        const d = dayjs(`${target.month}-01`);
+        return {
+          value: target.value,
+          detail: d.isValid() ? d.format("YYYY 年 MM 月 平均") : `${target.month} 平均`,
+        };
+      }
+    }
+
+    if (year !== "ALL") {
+      const rows = avgDurationRows.filter(item => item.year === year);
+      if (rows.length) {
+        const average = rows.reduce((sum, item) => sum + item.value, 0) / rows.length;
+        return {
+          value: +average.toFixed(2),
+          detail: `${year} 年平均（${rows.length} 月）`,
+        };
+      }
+    }
+
+    const latest = avgDurationRows[avgDurationRows.length - 1];
+    if (!latest) return { value: null, detail: null };
+    const d = dayjs(`${latest.month}-01`);
+    return {
+      value: latest.value,
+      detail: d.isValid() ? `最新 ${d.format("YYYY 年 MM 月")} 平均` : `最新 ${latest.month}`,
+    };
+  }, [avgDurationRows, month, year]);
 
   const monthlyTotals = useMemo(() => {
     const map = new Map<string, {
@@ -182,6 +236,24 @@ export default function Dashboard() {
   const monthTotalCount = useMemo(() => {
     return filteredTrend.reduce((sum, r) => sum + (r.count || 0), 0);
   }, [filteredTrend]);
+
+  const averageDailyCount = useMemo(() => {
+    if (!filteredTrend.length) return null;
+    return +(monthTotalCount / filteredTrend.length).toFixed(1);
+  }, [filteredTrend, monthTotalCount]);
+
+  const averageDailyDetail = useMemo(() => {
+    if (!filteredTrend.length) return null;
+    if (month !== "ALL") {
+      const d = dayjs(`${month}-01`);
+      const prefix = d.isValid() ? d.format("YYYY 年 MM 月") : month;
+      return `${prefix}（${filteredTrend.length} 日）`;
+    }
+    if (year !== "ALL") {
+      return `${year} 年平均（${filteredTrend.length} 日）`;
+    }
+    return `最近 ${filteredTrend.length} 日平均`;
+  }, [filteredTrend, month, year]);
 
   const totalLabel = useMemo(() => {
     if (month !== "ALL") return "本月總件數";
@@ -251,7 +323,6 @@ export default function Dashboard() {
       .slice(0, 5);
   }, [moduleByMonth, year, month]);
 
-  const k = kpi?.[0] ?? {};
   const trendRef = useRef<HTMLDivElement | null>(null);
   const topRef = useRef<HTMLDivElement | null>(null);
   const weekdayRef = useRef<HTMLDivElement | null>(null);
@@ -359,10 +430,21 @@ export default function Dashboard() {
 
       {/* KPI 區：桌面 5 欄、平板 3 欄、手機 1 欄 */}
       <section className="kpi-grid">
-        <Kpi label={totalLabel}       value={monthTotalCount} />
-        <Kpi label="解決率"           value={k["解決率"] ?? "-"} />
-        <Kpi label="平均處理時長(分)" value={k["平均處理時長"] ?? k["平均處理時長(分)"] ?? "-"} />
-        <Kpi label="未結案數"         value={k["未結案數"] ?? "-"} />
+        <Kpi
+          label={totalLabel}
+          value={monthTotalCount}
+          detail={rangeLabel || (filteredTrend.length ? `共 ${filteredTrend.length} 日` : null)}
+        />
+        <Kpi
+          label="平均處理時長(分)"
+          value={typeof avgDurationStat.value === "number" ? Number(avgDurationStat.value.toFixed(2)) : "-"}
+          detail={avgDurationStat.detail}
+        />
+        <Kpi
+          label="平均每日件數"
+          value={averageDailyCount ?? "-"}
+          detail={averageDailyDetail}
+        />
       </section>
 
       {/* 圖表網格：桌面兩欄 */}
