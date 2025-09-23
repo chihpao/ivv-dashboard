@@ -51,7 +51,9 @@ const movingAvg = (data: TrendRow[], key: keyof TrendRow, win: number) => {
 };
 
 export default function Dashboard() {
-  const { trend, moduleByMonth, avgCallDuration, loading } = useSheets();
+  const { trend, moduleByMonth, avgCallDuration, calls, loading } = useSheets();
+  const [selectedModule, setSelectedModule] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [year, setYear] = useState<string>("ALL");
   const [month, setMonth] = useState<string>("ALL");
   const isYearAll = year === "ALL";
@@ -402,6 +404,18 @@ export default function Dashboard() {
     });
   }, [filteredTrend]);
 
+  const drilldownRows = useMemo(() => {
+    if (!selectedModule) return [];
+    return (calls ?? []).filter((r: any) => {
+      const rawDate = r["call_time"];
+      const mk = monthKey(String(rawDate ?? ""));
+      const module = String(r["module"] ?? r["模組"] ?? r["Module"] ?? "");
+      if (year !== "ALL" && yearFromMonth(mk) !== year) return false;
+      if (month !== "ALL" && mk !== month) return false;
+      return module === selectedModule;
+    });
+  }, [calls, selectedModule, year, month]);
+  
   const insights = useMemo(() => {
     const list: string[] = [];
     if (!trendAll.length) return list;
@@ -590,7 +604,24 @@ export default function Dashboard() {
                 <XAxis dataKey="name" interval={0} angle={-10} textAnchor="end" height={58} />
                 <YAxis allowDecimals={false} />
                 <Tooltip />
-                <Bar dataKey="value" name="件數" />
+                <Bar
+                  dataKey="value"
+                  name="件數"
+                  onClick={(data) => {
+                    console.log("Bar clicked:", data); // 調試信息
+                    console.log("Available calls data:", calls?.length || 0, "records"); // 調試信息
+                    console.log("Top rows:", topRows); // 調試信息
+                    const moduleName = String(data?.name || data?.payload?.name || "");
+                    console.log("Selected module:", moduleName); // 調試信息
+                    if (moduleName) {
+                      setSelectedModule(moduleName);
+                      setDrawerOpen(true);
+                    } else {
+                      console.warn("No module name found in click data:", data);
+                    }
+                  }}
+                  style={{ cursor: "pointer" }}
+                />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -598,6 +629,69 @@ export default function Dashboard() {
       </section>
 
       <footer className="footer">最後更新：{dayjs().format("YYYY-MM-DD HH:mm")}</footer>
+      {drawerOpen && (
+        <>
+          <div
+            className="drawer-overlay active"
+            onClick={() => setDrawerOpen(false)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => e.key === 'Escape' && setDrawerOpen(false)}
+          />
+          <div
+            className="drawer open"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="drawer-title"
+          >
+            <div className="drawer-header">
+              <h3 id="drawer-title">{selectedModule} - 明細</h3>
+              <button
+                onClick={() => setDrawerOpen(false)}
+                className="close-button"
+                aria-label="關閉抽屜"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="drawer-body">
+              <p>總件數：{drilldownRows.length}</p>
+              {drilldownRows.length === 0 ? (
+                <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+                  <p>沒有找到 {selectedModule} 模組的詳細資料</p>
+                  <p>請檢查資料來源或選擇其他模組</p>
+                </div>
+              ) : (
+                <div className="table-container">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>日期</th>
+                        <th>分類</th>
+                        <th>處理時間(分)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {drilldownRows.slice(0, 50).map((r, i) => (
+                        <tr key={i}>
+                          <td>{r["call_time"]}</td>
+                          <td>{r["category"]}</td>
+                          <td>{r["resolve_minute"]}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {drilldownRows.length > 50 && (
+                <p style={{ marginTop: '10px', fontSize: '12px', color: '#666' }}>
+                  顯示前 50 筆資料，共 {drilldownRows.length} 筆
+                </p>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
