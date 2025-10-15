@@ -4,7 +4,7 @@ import dayjs from "dayjs";
 import html2canvas from "html2canvas";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer,
-  BarChart, Bar, Legend
+  BarChart, Bar, Legend, AreaChart, Area
 } from "recharts";
 import "./Dashboard.css";
 
@@ -49,6 +49,10 @@ const movingAvg = (data: TrendRow[], key: keyof TrendRow, win: number) => {
   }
   return out;
 };
+
+const CATEGORY_OTHERS_KEY = "其他分類";
+const CATEGORY_COLOR_PALETTE = ["#0ea5e9", "#22c55e", "#f97316", "#8b5cf6", "#f43f5e", "#14b8a6"];
+const CATEGORY_OTHERS_COLOR = "#94a3b8";
 
 export default function Dashboard() {
   const { trend, moduleByMonth, avgCallDuration, calls, loading } = useSheets();
@@ -370,9 +374,173 @@ export default function Dashboard() {
       .slice(0, 5);
   }, [moduleByMonth, year, month]);
 
+  const filteredCalls = useMemo(() => {
+    if (!calls?.length) return [] as Array<Record<string, any>>;
+    return (calls as Array<Record<string, any>>).filter(row => {
+      const mk = monthKey(String(row["call_month"] ?? row["call_time"] ?? ""));
+      if (!mk || mk.length < 7) return false;
+      if (year !== "ALL" && yearFromMonth(mk) !== year) return false;
+      if (month !== "ALL" && mk !== month) return false;
+      return true;
+    });
+  }, [calls, year, month]);
+
+  const {
+    data: categoryStackData,
+    keys: categoryStackKeys,
+    isDaily: categoryStackIsDaily,
+  } = useMemo(() => {
+    if (!filteredCalls.length) {
+      return {
+        data: [] as Array<Record<string, number | string>>,
+        keys: [] as string[],
+        isDaily: month !== "ALL",
+      };
+    }
+
+    const useDaily = month !== "ALL";
+    const aggregate = new Map<string, Map<string, number>>();
+    const totals = new Map<string, number>();
+
+    for (const row of filteredCalls) {
+      const rawMonth = row["call_month"] ?? row["month"] ?? row["call_time"];
+      const mk = monthKey(String(rawMonth ?? ""));
+      if (!mk || mk.length < 7) continue;
+      const callDate = dayjs(row["call_time"]);
+      const bucketKey = useDaily && callDate.isValid() ? callDate.format("YYYY-MM-DD") : mk;
+      const category = String(row["category"] ?? row["分類"] ?? "").trim() || "未分類";
+
+      if (!aggregate.has(bucketKey)) aggregate.set(bucketKey, new Map());
+      const bucket = aggregate.get(bucketKey)!;
+      bucket.set(category, (bucket.get(category) ?? 0) + 1);
+
+      totals.set(category, (totals.get(category) ?? 0) + 1);
+    }
+
+    if (!aggregate.size) {
+      return {
+        data: [] as Array<Record<string, number | string>>,
+        keys: [] as string[],
+        isDaily: useDaily,
+      };
+    }
+
+    const topCategories = Array.from(totals.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([key]) => key);
+
+    const sortedKeys = Array.from(aggregate.keys()).sort((a, b) => a.localeCompare(b));
+
+    const dataRows = sortedKeys.map(periodKey => {
+      const bucket = aggregate.get(periodKey)!;
+      const row: Record<string, number | string> = { period: periodKey };
+      let others = 0;
+
+      for (const [category, count] of bucket.entries()) {
+        if (topCategories.includes(category)) {
+          row[category] = count;
+        } else {
+          others += count;
+        }
+      }
+
+      if (others > 0) row[CATEGORY_OTHERS_KEY] = others;
+      return row;
+    });
+
+    const keys = [...topCategories];
+    if (dataRows.some(row => CATEGORY_OTHERS_KEY in row)) {
+      keys.push(CATEGORY_OTHERS_KEY);
+    }
+
+    return { data: dataRows, keys, isDaily: useDaily };
+  }, [filteredCalls, month]);
+
+  const categoryColorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    categoryStackKeys.forEach((key, idx) => {
+      const color = key === CATEGORY_OTHERS_KEY
+        ? CATEGORY_OTHERS_COLOR
+        : CATEGORY_COLOR_PALETTE[idx % CATEGORY_COLOR_PALETTE.length];
+      map.set(key, color);
+    });
+    return map;
+  }, [categoryStackKeys]);
+
+  const categoryXAxisFormatter = useMemo(() => {
+    return (value: string) => {
+      if (categoryStackIsDaily) {
+        const d = dayjs(value);
+        return d.isValid() ? d.format("MM-DD") : value;
+      }
+      const d = dayjs(`${value}-01`);
+      return d.isValid() ? d.format("YYYY-MM") : value;
+    };
+  }, [categoryStackIsDaily]);
+
+  const categoryTooltipLabelFormatter = useMemo(() => {
+    return (value: string) => {
+      if (categoryStackIsDaily) {
+        const d = dayjs(value);
+        return d.isValid() ? d.format("YYYY-MM-DD") : value;
+      }
+      const d = dayjs(`${value}-01`);
+      return d.isValid() ? d.format("YYYY-MM") : value;
+    };
+  }, [categoryStackIsDaily]);
+
+  const durationDistribution = useMemo(() => {
+    if (!filteredCalls.length) return [] as Array<{ label: string; count: number }>;
+
+    const buckets = [
+      { min: 0, max: 5, label: "0-5 ��" },
+      { min: 5, max: 10, label: "5-10 ��" },
+      { min: 10, max: 20, label: "10-20 ��" },
+      { min: 20, max: 30, label: "20-30 ��" },
+      { min: 30, max: 60, label: "30-60 ��" },
+      { min: 60, max: Infinity, label: "60+ ��" },
+    ];
+
+    const counts = buckets.map(bucket => ({ label: bucket.label, count: 0 }));
+    let missing = 0;
+
+    for (const row of filteredCalls) {
+      const raw = Number(row["resolve_minute"]);
+      if (!Number.isFinite(raw)) {
+        missing += 1;
+        continue;
+      }
+
+      const minutes = Math.max(0, raw);
+      let matched = false;
+
+      for (let i = 0; i < buckets.length; i++) {
+        const bucket = buckets[i];
+        const inBucket = bucket.max === Infinity
+          ? minutes >= bucket.min
+          : minutes >= bucket.min && minutes < bucket.max;
+
+        if (inBucket) {
+          counts[i].count += 1;
+          matched = true;
+          break;
+        }
+      }
+
+      if (!matched) missing += 1;
+    }
+
+    const data = counts.filter(item => item.count > 0);
+    if (missing > 0) data.push({ label: "未填寫", count: missing });
+    return data;
+  }, [filteredCalls]);
+
   const trendRef = useRef<HTMLDivElement | null>(null);
-  const topRef = useRef<HTMLDivElement | null>(null);
+  const categoryRef = useRef<HTMLDivElement | null>(null);
   const weekdayRef = useRef<HTMLDivElement | null>(null);
+  const durationRef = useRef<HTMLDivElement | null>(null);
+  const topRef = useRef<HTMLDivElement | null>(null);
 
   const png = async (ref: React.RefObject<HTMLDivElement | null>, name: string) => {
     if (!ref.current) return;
@@ -406,16 +574,11 @@ export default function Dashboard() {
 
   const drilldownRows = useMemo(() => {
     if (!selectedModule) return [];
-    return (calls ?? []).filter((r: any) => {
-      const rawDate = r["call_time"];
-      const mk = monthKey(String(rawDate ?? ""));
-      const module = String(r["module"] ?? r["模組"] ?? r["Module"] ?? "");
-      if (year !== "ALL" && yearFromMonth(mk) !== year) return false;
-      if (month !== "ALL" && mk !== month) return false;
+    return filteredCalls.filter((r: any) => {
+      const module = String(r["module"] ?? r["�Ҳ�"] ?? r["Module"] ?? "");
       return module === selectedModule;
     });
-  }, [calls, selectedModule, year, month]);
-  
+  }, [filteredCalls, selectedModule]);
   const insights = useMemo(() => {
     const list: string[] = [];
     if (!trendAll.length) return list;
@@ -507,6 +670,11 @@ export default function Dashboard() {
       </section>
 
       {/* 圖表網格：桌面兩欄 */}
+      {/* 圖表網格：桌面兩欄 */}
+
+      {/* 圖表網格：桌面兩欄 */}
+
+      {/* 圖表網格：桌面兩欄 */}
       <section className="cards">
         <div className="card card--insights">
           <div className="card-head">
@@ -522,8 +690,7 @@ export default function Dashboard() {
             )}
           </div>
         </div>
-
-        {/* 日趨勢 */}
+        {/* 日趨勢（件數） */}
         <div className="card" ref={trendRef}>
           <div className="card-head">
             <div className="card-title">日趨勢（件數）{rangeLabel ? ` - ${rangeLabel}` : ""}</div>
@@ -553,8 +720,57 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </div>
         </div>
-
-        {/* 週別節奏 */}
+        {/* 分類堆疊面積圖 */}
+        <div className="card" ref={categoryRef}>
+          <div className="card-head">
+            <div className="card-title">分類堆疊面積圖{rangeLabel ? ` - ${rangeLabel}` : ""}</div>
+            <div className="actions">
+              <button className="btn" onClick={() => png(categoryRef, `category-stack-${exportKey}.png`)} disabled={!categoryStackData.length}>匯出 PNG</button>
+              <button
+                className="btn"
+                onClick={() => download(`category-stack-${exportKey}.csv`, new Blob([toCsv(categoryStackData)], { type: "text/csv;charset=utf-8" }))}
+                disabled={!categoryStackData.length}
+              >
+                匯出 CSV
+              </button>
+            </div>
+          </div>
+          <div className="chart">
+            {categoryStackData.length && categoryStackKeys.length ? (
+              <ResponsiveContainer>
+                <AreaChart data={categoryStackData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="period" tickFormatter={categoryXAxisFormatter} />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip
+                    labelFormatter={categoryTooltipLabelFormatter}
+                    formatter={(value: any, name) => [formatNumber(Number(value) || 0), name]}
+                  />
+                  <Legend />
+                  {categoryStackKeys.map(key => {
+                    const color = categoryColorMap.get(key) ?? CATEGORY_COLOR_PALETTE[0];
+                    return (
+                      <Area
+                        key={key}
+                        type="monotone"
+                        dataKey={key}
+                        name={key}
+                        stackId="categories"
+                        stroke={color}
+                        fill={color}
+                        fillOpacity={0.75}
+                        dot={false}
+                      />
+                    );
+                  })}
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="empty">尚無足夠資料</div>
+            )}
+          </div>
+        </div>
+        {/* 週期節奏（平均每日件數） */}
         <div className="card" ref={weekdayRef}>
           <div className="card-head">
             <div className="card-title">週期節奏（平均每日件數）</div>
@@ -581,8 +797,38 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </div>
         </div>
-
-        {/* 模組 Top5（會跟月份變動） */}
+        {/* 處理時間分佈（分鐘） */}
+        <div className="card" ref={durationRef}>
+          <div className="card-head">
+            <div className="card-title">處理時間分佈（分鐘）{rangeLabel ? ` - ${rangeLabel}` : ""}</div>
+            <div className="actions">
+              <button className="btn" onClick={() => png(durationRef, `resolve-distribution-${exportKey}.png`)} disabled={!durationDistribution.length}>匯出 PNG</button>
+              <button
+                className="btn"
+                onClick={() => download(`resolve-distribution-${exportKey}.csv`, new Blob([toCsv(durationDistribution)], { type: "text/csv;charset=utf-8" }))}
+                disabled={!durationDistribution.length}
+              >
+                匯出 CSV
+              </button>
+            </div>
+          </div>
+          <div className="chart">
+            {durationDistribution.length ? (
+              <ResponsiveContainer>
+                <BarChart data={durationDistribution}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="label" />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip formatter={(value: any) => [formatNumber(Number(value) || 0), "案件數"]} />
+                  <Bar dataKey="count" name="案件數" fill="#2f80ed" />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="empty">尚無足夠資料</div>
+            )}
+          </div>
+        </div>
+        {/* 模組別 Top 5（件數） */}
         <div className="card" ref={topRef}>
           <div className="card-head">
             <div className="card-title">模組別 Top 5（件數）{rangeLabel ? ` - ${rangeLabel}` : ""}</div>
@@ -608,11 +854,11 @@ export default function Dashboard() {
                   dataKey="value"
                   name="件數"
                   onClick={(data) => {
-                    console.log("Bar clicked:", data); // 調試信息
-                    console.log("Available calls data:", calls?.length || 0, "records"); // 調試信息
-                    console.log("Top rows:", topRows); // 調試信息
+                    console.log("Bar clicked:", data); // 調試資訊
+                    console.log("Available calls data:", calls?.length || 0, "records"); // 調試資訊
+                    console.log("Top rows:", topRows); // 調試資訊
                     const moduleName = String(data?.name || data?.payload?.name || "");
-                    console.log("Selected module:", moduleName); // 調試信息
+                    console.log("Selected module:", moduleName); // 調試資訊
                     if (moduleName) {
                       setSelectedModule(moduleName);
                       setDrawerOpen(true);
@@ -732,3 +978,4 @@ function LoadingState() {
     </div>
   );
 }
+
