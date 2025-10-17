@@ -1,15 +1,36 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from "react";
 import { useSheets } from "./useSheets";
 import dayjs from "dayjs";
 import html2canvas from "html2canvas";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer,
-  BarChart, Bar, Legend, AreaChart, Area
+  BarChart, Bar, Legend, AreaChart, Area, ReferenceLine
 } from "recharts";
 import "./Dashboard.css";
 
 type TrendRow = { date: string; count: number; ma7?: number | null; ma30?: number | null };
 type TopRow   = { name: string; value: number };
+type DurationMetric = "count" | "percentage";
+type DurationBinMode = "auto" | "fixed";
+type DurationGroupBy = "none" | "category" | "module";
+
+type DurationDrawerState =
+  | { type: "module"; name: string }
+  | {
+      type: "duration";
+      label: string;
+      groupLabel: string | null;
+      min: number;
+      max: number | null;
+      rows: Array<Record<string, any>>;
+    };
+
+type DurationRow = {
+  minutes: number;
+  category: string;
+  module: string;
+  source: Record<string, any>;
+};
 
 const numberFormatter = new Intl.NumberFormat("zh-Hant");
 
@@ -50,17 +71,50 @@ const movingAvg = (data: TrendRow[], key: keyof TrendRow, win: number) => {
   return out;
 };
 
-const CATEGORY_OTHERS_KEY = "其他分類";
 const CATEGORY_COLOR_PALETTE = ["#0ea5e9", "#22c55e", "#f97316", "#8b5cf6", "#f43f5e", "#14b8a6"];
-const CATEGORY_OTHERS_COLOR = "#94a3b8";
+const DURATION_OTHERS_KEY = "其他";
+
+const FIXED_DURATION_BINS = [
+  { min: 0, max: 3 },
+  { min: 3, max: 5 },
+  { min: 5, max: 10 },
+  { min: 10, max: 15 },
+  { min: 15, max: 20 },
+  { min: 20, max: 30 },
+  { min: 30, max: 45 },
+  { min: 45, max: 60 },
+  { min: 60, max: 90 },
+  { min: 90, max: 120 },
+  { min: 120, max: 180 },
+  { min: 180, max: null },
+];
+
+const formatDurationLabel = (min: number, max: number | null) => {
+  if (max == null) return `${Math.round(min)}+ 分`;
+  const roundedMin = Math.round(min);
+  const roundedMax = Math.round(max);
+  if (roundedMin === roundedMax) return `${roundedMin} 分`;
+  return `${roundedMin}-${roundedMax} 分`;
+};
 
 export default function Dashboard() {
   const { trend, moduleByMonth, avgCallDuration, calls, loading } = useSheets();
-  const [selectedModule, setSelectedModule] = useState<string | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerState, setDrawerState] = useState<DurationDrawerState | null>(null);
   const [year, setYear] = useState<string>("ALL");
   const [month, setMonth] = useState<string>("ALL");
+  const [durationMetric, setDurationMetric] = useState<DurationMetric>("count");
+  const [durationBinMode, setDurationBinMode] = useState<DurationBinMode>("auto");
+  const [durationFocus30, setDurationFocus30] = useState<boolean>(false);
+  const [durationGroupBy, setDurationGroupBy] = useState<DurationGroupBy>("none");
+  const [durationGroupSelection, setDurationGroupSelection] = useState<string>("ALL");
+  const [durationFacetEnabled, setDurationFacetEnabled] = useState<boolean>(false);
   const isYearAll = year === "ALL";
+  const toggleActiveStyle: CSSProperties = {
+    fontWeight: 600,
+    borderColor: "#2563eb",
+    color: "#2563eb",
+    backgroundColor: "rgba(37, 99, 235, 0.08)",
+  };
 
   // 趨勢資料（含移動平均）
   const trendAll: TrendRow[] = useMemo(() => {
@@ -385,6 +439,95 @@ export default function Dashboard() {
     });
   }, [calls, year, month]);
 
+  const durationBase = useMemo(() => {
+    const rows: DurationRow[] = [];
+    const missing: Array<Record<string, any>> = [];
+    const categoryTotals = new Map<string, number>();
+    const moduleTotals = new Map<string, number>();
+
+    const normalizeCategory = (row: Record<string, any>) => {
+      const value =
+        row["category"] ??
+        row["分類"] ??
+        row["Category"] ??
+        row["呼叫分類"] ??
+        row["類別"];
+      const name = String(value ?? "").trim();
+      return name || "未分類";
+    };
+
+    const normalizeModule = (row: Record<string, any>) => {
+      const value =
+        row["module"] ??
+        row["模組"] ??
+        row["Module"] ??
+        row["呼叫模組"] ??
+        row["系統"];
+      const name = String(value ?? "").trim();
+      return name || "未指派";
+    };
+
+    for (const rawRow of filteredCalls) {
+      const rawDuration = Number(rawRow["resolve_minute"] ?? rawRow["resolve_minutes"]);
+      const category = normalizeCategory(rawRow);
+      const moduleName = normalizeModule(rawRow);
+      const sourceRow = rawRow as Record<string, any>;
+
+      categoryTotals.set(category, (categoryTotals.get(category) ?? 0) + 1);
+      moduleTotals.set(moduleName, (moduleTotals.get(moduleName) ?? 0) + 1);
+
+      if (!Number.isFinite(rawDuration)) {
+        missing.push(sourceRow);
+        continue;
+      }
+
+      const minutes = Math.max(0, rawDuration);
+      rows.push({ minutes, category, module: moduleName, source: sourceRow });
+    }
+
+    return { rows, missing, categoryTotals, moduleTotals };
+  }, [filteredCalls]);
+
+  const durationCategoryOptions = useMemo(() => {
+    return Array.from(durationBase.categoryTotals.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name]) => name);
+  }, [durationBase.categoryTotals]);
+
+  const durationModuleOptions = useMemo(() => {
+    return Array.from(durationBase.moduleTotals.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name]) => name);
+  }, [durationBase.moduleTotals]);
+
+  useEffect(() => {
+    if (durationGroupBy === "none") {
+      if (durationGroupSelection !== "ALL") setDurationGroupSelection("ALL");
+      if (durationFacetEnabled) setDurationFacetEnabled(false);
+      return;
+    }
+    const options = durationGroupBy === "category" ? durationCategoryOptions : durationModuleOptions;
+    if (durationGroupSelection !== "ALL" && !options.includes(durationGroupSelection)) {
+      setDurationGroupSelection("ALL");
+    }
+    if (durationGroupSelection !== "ALL" && durationFacetEnabled) {
+      setDurationFacetEnabled(false);
+    }
+  }, [
+    durationGroupBy,
+    durationCategoryOptions,
+    durationModuleOptions,
+    durationGroupSelection,
+    durationFacetEnabled,
+  ]);
+
+  const durationFilterOptions = durationGroupBy === "category"
+    ? durationCategoryOptions
+    : durationGroupBy === "module"
+    ? durationModuleOptions
+    : [];
+  const canFacet = durationGroupBy !== "none" && durationGroupSelection === "ALL";
+
   const {
     data: categoryStackData,
     keys: categoryStackKeys,
@@ -435,24 +578,17 @@ export default function Dashboard() {
     const dataRows = sortedKeys.map(periodKey => {
       const bucket = aggregate.get(periodKey)!;
       const row: Record<string, number | string> = { period: periodKey };
-      let others = 0;
 
       for (const [category, count] of bucket.entries()) {
         if (topCategories.includes(category)) {
           row[category] = count;
-        } else {
-          others += count;
         }
       }
 
-      if (others > 0) row[CATEGORY_OTHERS_KEY] = others;
       return row;
     });
 
     const keys = [...topCategories];
-    if (dataRows.some(row => CATEGORY_OTHERS_KEY in row)) {
-      keys.push(CATEGORY_OTHERS_KEY);
-    }
 
     return { data: dataRows, keys, isDaily: useDaily };
   }, [filteredCalls, month]);
@@ -460,9 +596,7 @@ export default function Dashboard() {
   const categoryColorMap = useMemo(() => {
     const map = new Map<string, string>();
     categoryStackKeys.forEach((key, idx) => {
-      const color = key === CATEGORY_OTHERS_KEY
-        ? CATEGORY_OTHERS_COLOR
-        : CATEGORY_COLOR_PALETTE[idx % CATEGORY_COLOR_PALETTE.length];
+      const color = CATEGORY_COLOR_PALETTE[idx % CATEGORY_COLOR_PALETTE.length];
       map.set(key, color);
     });
     return map;
@@ -490,51 +624,353 @@ export default function Dashboard() {
     };
   }, [categoryStackIsDaily]);
 
-  const durationDistribution = useMemo(() => {
-    if (!filteredCalls.length) return [] as Array<{ label: string; count: number }>;
+  const durationChart = useMemo(() => {
+    const { rows: allRows, missing } = durationBase;
+    const groupLabel = durationGroupBy === "category" ? "分類" : durationGroupBy === "module" ? "模組" : null;
 
-    const buckets = [
-      { min: 0, max: 5, label: "0-5 ��" },
-      { min: 5, max: 10, label: "5-10 ��" },
-      { min: 10, max: 20, label: "10-20 ��" },
-      { min: 20, max: 30, label: "20-30 ��" },
-      { min: 30, max: 60, label: "30-60 ��" },
-      { min: 60, max: Infinity, label: "60+ ��" },
-    ];
-
-    const counts = buckets.map(bucket => ({ label: bucket.label, count: 0 }));
-    let missing = 0;
-
-    for (const row of filteredCalls) {
-      const raw = Number(row["resolve_minute"]);
-      if (!Number.isFinite(raw)) {
-        missing += 1;
-        continue;
-      }
-
-      const minutes = Math.max(0, raw);
-      let matched = false;
-
-      for (let i = 0; i < buckets.length; i++) {
-        const bucket = buckets[i];
-        const inBucket = bucket.max === Infinity
-          ? minutes >= bucket.min
-          : minutes >= bucket.min && minutes < bucket.max;
-
-        if (inBucket) {
-          counts[i].count += 1;
-          matched = true;
-          break;
-        }
-      }
-
-      if (!matched) missing += 1;
+    if (!allRows.length) {
+      return {
+        rows: [] as Array<Record<string, any>>,
+        csvRows: [] as Array<Record<string, any>>,
+        seriesKeys: [] as string[],
+        colorMap: new Map<string, string>(),
+        bucketDetails: new Map<string, { label: string; groupLabel: string | null; min: number; max: number | null; rows: Array<Record<string, any>> }>(),
+        totalCount: 0,
+        mean: null as number | null,
+        median: null as number | null,
+        meanLabel: null as string | null,
+        medianLabel: null as string | null,
+        missingCount: missing.length,
+        missingRows: missing,
+        groupLabel,
+        facet: false,
+        groupDisplay: new Map<string, string>(),
+      };
     }
 
-    const data = counts.filter(item => item.count > 0);
-    if (missing > 0) data.push({ label: "未填寫", count: missing });
-    return data;
-  }, [filteredCalls]);
+    const focusLimit = durationFocus30 ? 30 : null;
+    const usingCategory = durationGroupBy === "category";
+    const usingModule = durationGroupBy === "module";
+    const groupField = usingCategory ? "category" : usingModule ? "module" : null;
+
+    let activeRows = allRows;
+    if (usingCategory && durationGroupSelection !== "ALL") {
+      activeRows = allRows.filter(row => row.category === durationGroupSelection);
+    } else if (usingModule && durationGroupSelection !== "ALL") {
+      activeRows = allRows.filter(row => row.module === durationGroupSelection);
+    }
+
+    const selectedDisplayName =
+      usingCategory && durationGroupSelection !== "ALL"
+        ? durationGroupSelection
+        : usingModule && durationGroupSelection !== "ALL"
+        ? durationGroupSelection
+        : "全部";
+
+    if (!activeRows.length) {
+      return {
+        rows: [] as Array<Record<string, any>>,
+        csvRows: [] as Array<Record<string, any>>,
+        seriesKeys: ["__all"],
+        colorMap: new Map<string, string>([["__all", CATEGORY_COLOR_PALETTE[0]]]),
+        bucketDetails: new Map<string, { label: string; groupLabel: string | null; min: number; max: number | null; rows: Array<Record<string, any>> }>(),
+        totalCount: 0,
+        mean: null as number | null,
+        median: null as number | null,
+        meanLabel: null as string | null,
+        medianLabel: null as string | null,
+        missingCount: missing.length,
+        missingRows: missing,
+        groupLabel,
+        facet: false,
+        groupDisplay: new Map<string, string>([["__all", selectedDisplayName]]),
+      };
+    }
+
+    const valuesSorted = [...activeRows].map(row => row.minutes).sort((a, b) => a - b);
+    const totalCount = valuesSorted.length;
+    const mean = valuesSorted.reduce((sum, value) => sum + value, 0) / totalCount;
+    const median =
+      totalCount % 2 === 0
+        ? (valuesSorted[totalCount / 2 - 1] + valuesSorted[totalCount / 2]) / 2
+        : valuesSorted[Math.floor(totalCount / 2)];
+
+    const valuesForBins = focusLimit == null
+      ? activeRows.map(row => row.minutes)
+      : activeRows.filter(row => row.minutes <= focusLimit).map(row => row.minutes);
+    const overLimitRows = focusLimit == null
+      ? [] as DurationRow[]
+      : activeRows.filter(row => row.minutes > focusLimit);
+
+    const buildFixedBins = (limit: number | null) => {
+      let bins = FIXED_DURATION_BINS.map(bin => ({
+        min: bin.min,
+        max: bin.max,
+        label: formatDurationLabel(bin.min, bin.max),
+      }));
+      if (limit != null) {
+        bins = bins.filter(bin => (bin.max ?? Infinity) <= limit + 1e-6);
+      }
+      if (!bins.length) {
+        const max = limit != null ? limit : valuesSorted[valuesSorted.length - 1];
+        const safeMax = Number.isFinite(max) ? max : 30;
+        bins = [{ min: 0, max: safeMax, label: formatDurationLabel(0, safeMax) }];
+      }
+      return bins;
+    };
+
+    const buildAutoBins = (limit: number | null) => {
+      if (!valuesForBins.length) {
+        const fallback = limit != null ? limit : valuesSorted[valuesSorted.length - 1];
+        const safeMax = Number.isFinite(fallback) ? fallback : 30;
+        return [{ min: 0, max: safeMax, label: formatDurationLabel(0, safeMax) }];
+      }
+      const minValue = Math.min(...valuesForBins);
+      const maxValue = Math.max(...valuesForBins);
+      if (minValue === maxValue) {
+        const width = Math.max(1, minValue);
+        const lower = Math.max(0, minValue - width / 2);
+        return [{ min: lower, max: minValue + width / 2, label: formatDurationLabel(lower, minValue + width / 2) }];
+      }
+      const span = Math.max(maxValue - minValue, 1);
+      const desiredBins = Math.min(12, Math.max(4, Math.ceil(Math.sqrt(valuesForBins.length))));
+      const width = span / desiredBins;
+      const bins: Array<{ min: number; max: number; label: string }> = [];
+      let start = minValue;
+      for (let i = 0; i < desiredBins; i += 1) {
+        const end = i === desiredBins - 1 ? maxValue : start + width;
+        bins.push({ min: start, max: end, label: formatDurationLabel(start, end) });
+        start = end;
+      }
+      return bins;
+    };
+
+    const baseBins = durationBinMode === "fixed"
+      ? buildFixedBins(focusLimit)
+      : buildAutoBins(focusLimit);
+
+    const binSummaries = baseBins.map((bin, index) => ({
+      ...bin,
+      key: "bin-" + index,
+      counts: new Map<string, number>(),
+      total: 0,
+    }));
+
+    let overLimitIndex: number | null = null;
+    if (focusLimit != null && overLimitRows.length) {
+      overLimitIndex = binSummaries.length;
+      binSummaries.push({
+        min: focusLimit,
+        max: null,
+        label: focusLimit + "+ 分",
+        key: "bin-" + binSummaries.length,
+        counts: new Map<string, number>(),
+        total: 0,
+      });
+    }
+
+    const getRowGroup = (row: DurationRow) => {
+      if (groupField === "category") return row.category;
+      if (groupField === "module") return row.module;
+      return "__all";
+    };
+
+    const facet = durationFacetEnabled && durationGroupBy !== "none" && durationGroupSelection === "ALL" && groupField !== null;
+    const groupTotals = new Map<string, number>();
+    const colorMap = new Map<string, string>();
+    const groupDisplay = new Map<string, string>();
+
+    let groupKeys: string[] = [];
+    let topGroupSet: Set<string> | null = null;
+
+    if (facet) {
+      const totalsByGroup = new Map<string, number>();
+      for (const row of activeRows) {
+        const key = getRowGroup(row);
+        totalsByGroup.set(key, (totalsByGroup.get(key) ?? 0) + 1);
+      }
+      const sortedGroups = Array.from(totalsByGroup.entries()).sort((a, b) => b[1] - a[1]);
+      const topGroups = sortedGroups.slice(0, 5).map(([key]) => key);
+      groupKeys = [...topGroups];
+      topGroupSet = new Set(topGroups);
+      const othersCount = sortedGroups.slice(5).reduce((sum, [, value]) => sum + value, 0);
+      if (othersCount > 0) {
+        groupKeys.push(DURATION_OTHERS_KEY);
+      }
+      for (const key of groupKeys) {
+        groupDisplay.set(key, key === DURATION_OTHERS_KEY ? DURATION_OTHERS_KEY : key);
+      }
+    } else {
+      groupKeys = ["__all"];
+      groupDisplay.set("__all", selectedDisplayName);
+    }
+
+    groupKeys.forEach((key, index) => {
+      colorMap.set(key, CATEGORY_COLOR_PALETTE[index % CATEGORY_COLOR_PALETTE.length]);
+      groupTotals.set(key, 0);
+    });
+
+    const bucketDetails = new Map<string, { label: string; groupLabel: string | null; min: number; max: number | null; rows: Array<Record<string, any>> }>();
+
+    const getGroupKey = (row: DurationRow) => {
+      if (!facet) return "__all";
+      const value = getRowGroup(row);
+      if (topGroupSet && topGroupSet.has(value)) return value;
+      return DURATION_OTHERS_KEY;
+    };
+
+    const assignRowToBinIndex = (value: number) => {
+      if (overLimitIndex != null && focusLimit != null && value > focusLimit) {
+        return overLimitIndex;
+      }
+      for (let i = 0; i < baseBins.length; i += 1) {
+        const bin = baseBins[i];
+        const max = bin.max ?? Infinity;
+        const inclusive = i === baseBins.length - 1;
+        const upperBound = inclusive ? max + 1e-6 : max;
+        if (value >= bin.min && value < upperBound) {
+          return i;
+        }
+      }
+      return baseBins.length - 1;
+    };
+
+    for (const row of activeRows) {
+      const groupKey = getGroupKey(row);
+      const binIndex = assignRowToBinIndex(row.minutes);
+      const summary = binSummaries[binIndex];
+      summary.counts.set(groupKey, (summary.counts.get(groupKey) ?? 0) + 1);
+      summary.total += 1;
+      groupTotals.set(groupKey, (groupTotals.get(groupKey) ?? 0) + 1);
+
+      const detailKey = binIndex + "|" + groupKey;
+      if (!bucketDetails.has(detailKey)) {
+        bucketDetails.set(detailKey, {
+          label: summary.label,
+          groupLabel: groupKey === "__all" ? null : (groupDisplay.get(groupKey) ?? groupKey),
+          min: summary.min,
+          max: summary.max ?? null,
+          rows: [],
+        });
+      }
+      bucketDetails.get(detailKey)!.rows.push(row.source);
+    }
+
+    const overallTotal = activeRows.length;
+    const rows: Array<Record<string, any>> = [];
+    binSummaries.forEach((bin, index) => {
+      if (bin.total === 0 && bin.max !== null && durationBinMode !== "fixed") {
+        return;
+      }
+      const record: Record<string, any> = {
+        label: bin.label,
+        bucketKey: String(index),
+        min: bin.min,
+        max: bin.max ?? null,
+        total: bin.total,
+      };
+      const countsRecord: Record<string, number> = {};
+      const percentRecord: Record<string, number> = {};
+      for (const key of groupKeys) {
+        const count = bin.counts.get(key) ?? 0;
+        countsRecord[key] = count;
+        const denominator = facet ? (groupTotals.get(key) ?? 0) || 1 : overallTotal || 1;
+        const percent = denominator ? (count / denominator) * 100 : 0;
+        percentRecord[key] = percent;
+        record[key] = durationMetric === "count" ? count : Number(percent.toFixed(1));
+      }
+      record.__counts = countsRecord;
+      record.__percents = percentRecord;
+      rows.push(record);
+    });
+
+    const csvRows = rows.map(row => {
+      const base: Record<string, any> = {
+        區間: row.label,
+        總件數: row.total,
+      };
+      const counts = row.__counts as Record<string, number>;
+      const percents = row.__percents as Record<string, number>;
+      for (const key of groupKeys) {
+        const display = groupDisplay.get(key) ?? key;
+        base[display + "-件數"] = counts[key] ?? 0;
+        base[display + "-佔比(%)"] = Number((percents[key] ?? 0).toFixed(1));
+      }
+      return base;
+    });
+
+    if (missing.length) {
+      csvRows.push({
+        區間: "未填寫",
+        總件數: missing.length,
+        "全部-件數": missing.length,
+        "全部-佔比(%)": Number(((missing.length / (overallTotal + missing.length)) * 100).toFixed(1)),
+      });
+    }
+
+    const findLabelForValue = (value: number | null) => {
+      if (value == null) return null;
+      if (focusLimit != null && value > focusLimit && overLimitIndex != null) {
+        return focusLimit + "+ 分";
+      }
+      for (const bin of binSummaries) {
+        const max = bin.max ?? Infinity;
+        if (value >= bin.min && value <= max + 1e-6) {
+          return bin.label;
+        }
+      }
+      return null;
+    };
+
+    const meanLabel = findLabelForValue(mean);
+    const medianLabel = findLabelForValue(median);
+
+    return {
+      rows,
+      csvRows,
+      seriesKeys: groupKeys,
+      colorMap,
+      bucketDetails,
+      totalCount,
+      mean,
+      median,
+      meanLabel,
+      medianLabel,
+      missingCount: missing.length,
+      missingRows: missing,
+      groupLabel,
+      facet,
+      groupDisplay,
+    };
+  }, [
+    durationBase,
+    durationBinMode,
+    durationFacetEnabled,
+    durationFocus30,
+    durationGroupBy,
+    durationGroupSelection,
+    durationMetric,
+  ]);
+
+  const handleDurationBarClick = (entry: any, seriesKey: string) => {
+    const payload = entry?.payload;
+    if (!payload) return;
+    const bucketKey = String(payload.bucketKey ?? "");
+    const detailKey = bucketKey + "|" + seriesKey;
+    const detail = durationChart.bucketDetails.get(detailKey);
+    if (!detail || !detail.rows.length) return;
+    setDrawerState({
+      type: "duration",
+      label: detail.label,
+      groupLabel: detail.groupLabel,
+      min: detail.min,
+      max: detail.max,
+      rows: detail.rows,
+    });
+  };
+
+  const durationMeanDisplay = durationChart.mean != null ? durationChart.mean.toFixed(1) : null;
+  const durationMedianDisplay = durationChart.median != null ? durationChart.median.toFixed(1) : null;
 
   const trendRef = useRef<HTMLDivElement | null>(null);
   const categoryRef = useRef<HTMLDivElement | null>(null);
@@ -572,13 +1008,14 @@ export default function Dashboard() {
     });
   }, [filteredTrend]);
 
-  const drilldownRows = useMemo(() => {
-    if (!selectedModule) return [];
-    return filteredCalls.filter((r: any) => {
-      const module = String(r["module"] ?? r["�Ҳ�"] ?? r["Module"] ?? "");
-      return module === selectedModule;
+  const moduleDrilldownRows = useMemo(() => {
+    if (drawerState?.type !== "module") return [];
+    return filteredCalls.filter((row: any) => {
+      const moduleName = String(row["module"] ?? row["模組"] ?? row["Module"] ?? "");
+      return moduleName === drawerState.name;
     });
-  }, [filteredCalls, selectedModule]);
+  }, [filteredCalls, drawerState]);
+
   const insights = useMemo(() => {
     const list: string[] = [];
     if (!trendAll.length) return list;
@@ -797,38 +1234,165 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </div>
         </div>
-        {/* 處理時間分佈（分鐘） */}
         <div className="card" ref={durationRef}>
           <div className="card-head">
             <div className="card-title">處理時間分佈（分鐘）{rangeLabel ? ` - ${rangeLabel}` : ""}</div>
             <div className="actions">
-              <button className="btn" onClick={() => png(durationRef, `resolve-distribution-${exportKey}.png`)} disabled={!durationDistribution.length}>匯出 PNG</button>
+              <button className="btn" onClick={() => png(durationRef, `resolve-distribution-${exportKey}.png`)} disabled={!durationChart.rows.length}>匯出 PNG</button>
               <button
                 className="btn"
-                onClick={() => download(`resolve-distribution-${exportKey}.csv`, new Blob([toCsv(durationDistribution)], { type: "text/csv;charset=utf-8" }))}
-                disabled={!durationDistribution.length}
+                onClick={() => download(`resolve-distribution-${exportKey}.csv`, new Blob([toCsv(durationChart.csvRows)], { type: "text/csv;charset=utf-8" }))}
+                disabled={!durationChart.rows.length}
               >
                 匯出 CSV
               </button>
             </div>
           </div>
+          <div className="card-toolbar" style={{ display: "flex", flexWrap: "wrap", gap: "10px", marginBottom: "12px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span>顯示</span>
+              <button
+                className="btn"
+                style={durationMetric === "count" ? toggleActiveStyle : undefined}
+                onClick={() => setDurationMetric("count")}
+              >
+                件數
+              </button>
+              <button
+                className="btn"
+                style={durationMetric === "percentage" ? toggleActiveStyle : undefined}
+                onClick={() => setDurationMetric("percentage")}
+              >
+                佔比
+              </button>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span>分箱</span>
+              <button
+                className="btn"
+                style={durationBinMode === "auto" ? toggleActiveStyle : undefined}
+                onClick={() => setDurationBinMode("auto")}
+              >
+                自動
+              </button>
+              <button
+                className="btn"
+                style={durationBinMode === "fixed" ? toggleActiveStyle : undefined}
+                onClick={() => setDurationBinMode("fixed")}
+              >
+                固定
+              </button>
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <input
+                type="checkbox"
+                checked={durationFocus30}
+                onChange={(e) => setDurationFocus30(e.target.checked)}
+              />
+              聚焦 0-30 分
+            </label>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span>篩選</span>
+              <select
+                className="select"
+                value={durationGroupBy}
+                onChange={(e) => setDurationGroupBy(e.target.value as DurationGroupBy)}
+              >
+                <option value="none">全部</option>
+                <option value="category">分類</option>
+                <option value="module">模組</option>
+              </select>
+              {durationGroupBy !== "none" && (
+                <select
+                  className="select"
+                  value={durationGroupSelection}
+                  onChange={(e) => setDurationGroupSelection(e.target.value)}
+                >
+                  <option value="ALL">全部</option>
+                  {durationFilterOptions.map(option => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+            {durationGroupBy !== "none" && (
+              <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <input
+                  type="checkbox"
+                  checked={durationFacetEnabled && canFacet}
+                  onChange={(e) => setDurationFacetEnabled(e.target.checked && canFacet)}
+                  disabled={!canFacet}
+                />
+                Facet 比較
+              </label>
+            )}
+          </div>
           <div className="chart">
-            {durationDistribution.length ? (
+            {durationChart.rows.length ? (
               <ResponsiveContainer>
-                <BarChart data={durationDistribution}>
+                <BarChart data={durationChart.rows}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="label" />
-                  <YAxis allowDecimals={false} />
-                  <Tooltip formatter={(value: any) => [formatNumber(Number(value) || 0), "案件數"]} />
-                  <Bar dataKey="count" name="案件數" fill="#2f80ed" />
+                  <YAxis
+                    allowDecimals={durationMetric === "percentage"}
+                    tickFormatter={(value) => durationMetric === "percentage" ? `${value}%` : formatNumber(Number(value) || 0)}
+                  />
+                  <Tooltip
+                    labelFormatter={(label) => label}
+                    formatter={(_value: any, dataKey: any, props: any) => {
+                      const key = String(dataKey);
+                      const payload = props?.payload ?? {};
+                      const counts = (payload.__counts as Record<string, number> | undefined) ?? {};
+                      const percents = (payload.__percents as Record<string, number> | undefined) ?? {};
+                      const count = counts[key] ?? 0;
+                      const percent = percents[key] ?? 0;
+                      const percentDisplay = Number.isFinite(percent) ? Number(percent.toFixed(1)) : 0;
+                      const displayName = durationChart.groupDisplay.get(key) ?? key;
+                      if (durationMetric === "count") {
+                        return [formatNumber(count), displayName];
+                      }
+                      return [`${percentDisplay}%`, `${displayName}（${formatNumber(count)} 件）`];
+                    }}
+                  />
+                  <Legend />
+                  {durationChart.medianLabel && durationMedianDisplay && (
+                    <ReferenceLine
+                      x={durationChart.medianLabel}
+                      stroke="#ef4444"
+                      strokeDasharray="6 6"
+                      label={{ value: `中位數 ${durationMedianDisplay} 分`, position: "insideTop", fill: "#ef4444", fontSize: 12 }}
+                    />
+                  )}
+                  {durationChart.meanLabel && durationMeanDisplay && (
+                    <ReferenceLine
+                      x={durationChart.meanLabel}
+                      stroke="#0ea5e9"
+                      strokeDasharray="4 4"
+                      label={{ value: `平均 ${durationMeanDisplay} 分`, position: "insideBottom", fill: "#0ea5e9", fontSize: 12 }}
+                    />
+                  )}
+                  {durationChart.seriesKeys.map(key => (
+                    <Bar
+                      key={key}
+                      dataKey={key}
+                      name={durationChart.groupDisplay.get(key) ?? key}
+                      fill={durationChart.colorMap.get(key) ?? CATEGORY_COLOR_PALETTE[0]}
+                      onClick={(data) => handleDurationBarClick(data, key)}
+                      cursor="pointer"
+                    />
+                  ))}
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <div className="empty">尚無足夠資料</div>
+              <div className="empty">暫無資料</div>
             )}
           </div>
+          {durationChart.missingCount > 0 && (
+            <div style={{ marginTop: "8px", fontSize: "12px", color: "#6b7280" }}>
+              缺少處理時間資料：{formatNumber(durationChart.missingCount)} 筆
+            </div>
+          )}
         </div>
-        {/* 模組別 Top 5（件數） */}
         <div className="card" ref={topRef}>
           <div className="card-head">
             <div className="card-title">模組別 Top 5（件數）{rangeLabel ? ` - ${rangeLabel}` : ""}</div>
@@ -852,19 +1416,11 @@ export default function Dashboard() {
                 <Tooltip />
                 <Bar
                   dataKey="value"
-                  name="件數"
+                  name="案件數"
                   onClick={(data) => {
-                    console.log("Bar clicked:", data); // 調試資訊
-                    console.log("Available calls data:", calls?.length || 0, "records"); // 調試資訊
-                    console.log("Top rows:", topRows); // 調試資訊
                     const moduleName = String(data?.name || data?.payload?.name || "");
-                    console.log("Selected module:", moduleName); // 調試資訊
-                    if (moduleName) {
-                      setSelectedModule(moduleName);
-                      setDrawerOpen(true);
-                    } else {
-                      console.warn("No module name found in click data:", data);
-                    }
+                    if (!moduleName) return;
+                    setDrawerState({ type: "module", name: moduleName });
                   }}
                   style={{ cursor: "pointer" }}
                 />
@@ -875,14 +1431,14 @@ export default function Dashboard() {
       </section>
 
       <footer className="footer">最後更新：{dayjs().format("YYYY-MM-DD HH:mm")}</footer>
-      {drawerOpen && (
+      {drawerState && (
         <>
           <div
             className="drawer-overlay active"
-            onClick={() => setDrawerOpen(false)}
+            onClick={() => setDrawerState(null)}
             role="button"
             tabIndex={0}
-            onKeyDown={(e) => e.key === 'Escape' && setDrawerOpen(false)}
+            onKeyDown={(e) => e.key === 'Escape' && setDrawerState(null)}
           />
           <div
             className="drawer open"
@@ -891,48 +1447,93 @@ export default function Dashboard() {
             aria-labelledby="drawer-title"
           >
             <div className="drawer-header">
-              <h3 id="drawer-title">{selectedModule} - 明細</h3>
+              <h3 id="drawer-title">
+                {drawerState.type === "module"
+                  ? `${drawerState.name} - 案件明細`
+                  : `${drawerState.label}${drawerState.groupLabel ? ` / ${drawerState.groupLabel}` : ""} - 案件明細`}
+              </h3>
               <button
-                onClick={() => setDrawerOpen(false)}
+                onClick={() => setDrawerState(null)}
                 className="close-button"
                 aria-label="關閉抽屜"
               >
-                ✕
+                ×
               </button>
             </div>
             <div className="drawer-body">
-              <p>總件數：{drilldownRows.length}</p>
-              {drilldownRows.length === 0 ? (
-                <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
-                  <p>沒有找到 {selectedModule} 模組的詳細資料</p>
-                  <p>請檢查資料來源或選擇其他模組</p>
-                </div>
+              {drawerState.type === "module" ? (
+                <>
+                  <p>總件數：{moduleDrilldownRows.length}</p>
+                  {moduleDrilldownRows.length === 0 ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+                      <p>沒有找到 {drawerState.name} 模組的詳細資料</p>
+                      <p>請檢查資料來源或選擇其他模組</p>
+                    </div>
+                  ) : (
+                    <div className="table-container">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>日期</th>
+                            <th>分類</th>
+                            <th>處理時間(分)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {moduleDrilldownRows.slice(0, 100).map((r, i) => (
+                            <tr key={i}>
+                              <td>{r["call_time"]}</td>
+                              <td>{r["category"]}</td>
+                              <td>{r["resolve_minute"]}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {moduleDrilldownRows.length > 100 && (
+                    <p style={{ marginTop: '10px', fontSize: '12px', color: '#666' }}>
+                      只顯示前 100 筆，其餘 {moduleDrilldownRows.length - 100} 筆可透過資料匯出取得
+                    </p>
+                  )}
+                </>
               ) : (
-                <div className="table-container">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>日期</th>
-                        <th>分類</th>
-                        <th>處理時間(分)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {drilldownRows.slice(0, 50).map((r, i) => (
-                        <tr key={i}>
-                          <td>{r["call_time"]}</td>
-                          <td>{r["category"]}</td>
-                          <td>{r["resolve_minute"]}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              {drilldownRows.length > 50 && (
-                <p style={{ marginTop: '10px', fontSize: '12px', color: '#666' }}>
-                  顯示前 50 筆資料，共 {drilldownRows.length} 筆
-                </p>
+                <>
+                  <p>區間：{drawerState.label}</p>
+                  {drawerState.groupLabel ? <p>維度：{drawerState.groupLabel}</p> : null}
+                  <p>筆數：{drawerState.rows.length}</p>
+                  {drawerState.rows.length === 0 ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>暫無資料</div>
+                  ) : (
+                    <div className="table-container">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>日期</th>
+                            <th>分類</th>
+                            <th>模組</th>
+                            <th>處理時間(分)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {drawerState.rows.slice(0, 100).map((r, i) => (
+                            <tr key={i}>
+                              <td>{r["call_time"]}</td>
+                              <td>{r["category"]}</td>
+                              <td>{r["module"]}</td>
+                              <td>{r["resolve_minute"]}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {drawerState.rows.length > 100 && (
+                    <p style={{ marginTop: '10px', fontSize: '12px', color: '#666' }}>
+                      只顯示前 100 筆，其餘 {drawerState.rows.length - 100} 筆可透過資料匯出取得
+                    </p>
+                  )}
+                </>
               )}
             </div>
           </div>
